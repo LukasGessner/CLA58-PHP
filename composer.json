@@ -1,0 +1,20 @@
+{
+    "name": "lukasgessner/cla58",
+    "description": "PHP library for the CLA58 / TECH (6868:0200) 58mm USB ESC/POS thermal printer",
+    "type": "library",
+    "license": "MIT",
+    "keywords": ["escpos", "esc/pos", "thermal", "printer", "cla58", "receipt", "usb"],
+    "require": {
+        "php": ">=8.0"
+    },
+    "suggest": {
+        "ext-gd": "Enables image()/imageFromFile() helpers for printing PNG/JPEG logos",
+        "ext-usb": "Enables the raw libusb connection instead of the kernel usblp device"
+    },
+    "autoload": {
+        "psr-4": {
+            "Cla58\\": "src/"
+        }
+    },
+    "bin": ["bin/cla58"]
+}

@@ -1,0 +1,192 @@
+#!/usr/bin/env php
+<?php
+
+declare(strict_types=1);
+
+require __DIR__ . '/../autoload.php';
+
+use Cla58\Printer;
+use Cla58\PrinterException;
+
+$argv = $argv ?? [];
+array_shift($argv);
+
+$device = getenv('CLA58_DEVICE') ?: '/dev/usb/lp0';
+$command = array_shift($argv) ?? 'help';
+
+$options = [];
+$args = [];
+foreach ($argv as $arg) {
+    if (str_starts_with($arg, '--')) {
+        [$key, $value] = array_pad(explode('=', substr($arg, 2), 2), 2, true);
+        $options[$key] = $value;
+    } else {
+        $args[] = $arg;
+    }
+}
+
+$usage = <<<TXT
+CLA58 ESC/POS printer tool
+
+Usage: cla58 <command> [options] [arguments]
+
+Commands:
+  test                 Print a self-test / character table page
+  status               Query printer status (online, paper out)
+  text <text...>       Print a line of text
+  wrap <text...>       Print word-wrapped text
+  qr <data>            Print a QR code
+  barcode <type> <data> Print a barcode (EAN13, CODE128, CODE39, ...)
+  image <file>         Print a PNG/JPEG (requires ext-gd)
+  raw <hex>            Send raw hex bytes, e.g. "1b40 48690a"
+  init                 Reset the printer
+  feed [n]             Feed n lines (default 1)
+  cut                  Trigger a full cut
+  drawer               Pulse the cash-drawer pin
+  beep                 Beep
+
+Options:
+  --device=PATH        Printer device (default: /dev/usb/lp0, env CLA58_DEVICE)
+  --center, --right    Alignment for text/wrap
+  --bold               Bold text
+  --size=N             Text size multiplier for text/wrap
+  --module=N           QR module size (1-16)
+  --height=N           Barcode height in dots
+  --width=N            Barcode module width (2-6)
+  --codepage=NAME      Code page (CP437, CP850, CP858, CP1252)
+
+Environmental:
+  CLA58_DEVICE         Overrides the default device path
+TXT;
+
+if (isset($options['device']) && is_string($options['device'])) {
+    $device = $options['device'];
+}
+
+try {
+    switch ($command) {
+        case 'help':
+        case '--help':
+        case '-h':
+            echo $usage . PHP_EOL;
+            exit(0);
+
+        case 'test':
+            withPrinter($device, $options, fn (Printer $p) => $p->test());
+            echo "Self-test page sent." . PHP_EOL;
+            break;
+
+        case 'status':
+            withPrinter($device, $options, function (Printer $p): void {
+                $online = $p->isOnline();
+                $paper = $p->paperOut();
+                printf("Online: %s\n", $online === null ? 'unknown' : ($online ? 'yes' : 'no'));
+                printf("Paper out: %s\n", $paper === null ? 'unknown' : ($paper ? 'yes' : 'no'));
+            });
+            break;
+
+        case 'text':
+            withPrinter($device, $options, function (Printer $p) use ($args, $options): void {
+                applyStyle($p, $options);
+                $p->line(implode(' ', $args));
+                $p->feed(2);
+            });
+            break;
+
+        case 'wrap':
+            withPrinter($device, $options, function (Printer $p) use ($args, $options): void {
+                applyStyle($p, $options);
+                $p->writeWrapped(implode(' ', $args), null, true);
+                $p->feed(2);
+            });
+            break;
+
+        case 'qr':
+            withPrinter($device, $options, function (Printer $p) use ($args, $options): void {
+                $module = (int) ($options['module'] ?? 4);
+                $p->align('center')->qr(implode(' ', $args), $module)->feed(3);
+            });
+            break;
+
+        case 'barcode':
+            withPrinter($device, $options, function (Printer $p) use ($args, $options): void {
+                $type = array_shift($args) ?? 'CODE128';
+                $p->align('center')->barcode(implode(' ', $args), $type,
+                    (int) ($options['height'] ?? 80), (int) ($options['width'] ?? 2))->feed(3);
+            });
+            break;
+
+        case 'image':
+            withPrinter($device, $options, function (Printer $p) use ($args): void {
+                $p->align('center')->imageFromFile($args[0] ?? '')->feed(3);
+            });
+            break;
+
+        case 'raw':
+            $hex = preg_replace('/[^0-9a-fA-F]/', '', implode('', $args));
+            if ($hex === '' || strlen($hex) % 2 !== 0) {
+                throw new PrinterException('raw expects an even number of hex digits, e.g. "1b40 48690a"');
+            }
+            $bytes = hex2bin($hex);
+            if ($bytes === false) {
+                throw new PrinterException('raw expects valid hex digits');
+            }
+            withPrinter($device, $options, fn (Printer $p) => $p->raw($bytes));
+            break;
+
+        case 'init':
+            withPrinter($device, $options, fn (Printer $p) => $p->init());
+            echo "Printer reset." . PHP_EOL;
+            break;
+
+        case 'feed':
+            withPrinter($device, $options, fn (Printer $p) => $p->feed((int) ($args[0] ?? 1)));
+            break;
+
+        case 'cut':
+            withPrinter($device, $options, fn (Printer $p) => $p->feed(2)->cut());
+            break;
+
+        case 'drawer':
+            withPrinter($device, $options, fn (Printer $p) => $p->cashDrawer());
+            break;
+
+        case 'beep':
+            withPrinter($device, $options, fn (Printer $p) => $p->beep());
+            break;
+
+        default:
+            fwrite(STDERR, sprintf("Unknown command \"%s\"\n\n%s\n", $command, $usage));
+            exit(2);
+    }
+} catch (PrinterException $e) {
+    fwrite(STDERR, 'Error: ' . $e->getMessage() . PHP_EOL);
+    exit(1);
+}
+
+function withPrinter(string $device, array $options, callable $callback): void
+{
+    $printer = new Printer($device, [
+        'codepage' => $options['codepage'] ?? 'CP437',
+    ]);
+    try {
+        $callback($printer);
+    } finally {
+        $printer->close();
+    }
+}
+
+function applyStyle(Printer $printer, array $options): void
+{
+    if (isset($options['center'])) {
+        $printer->align('center');
+    } elseif (isset($options['right'])) {
+        $printer->align('right');
+    }
+    if (isset($options['bold'])) {
+        $printer->bold();
+    }
+    if (isset($options['size'])) {
+        $printer->size((int) $options['size']);
+    }
+}
