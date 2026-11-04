@@ -8,6 +8,11 @@ thermal receipt/label printer. It talks to the printer over `/dev/usb/lp0` using
 Bus 001 Device 008: ID 6868:0200 TECH CLA58
 ```
 
+> **AI disclaimer:** This package was created with the assistance of AI (large language model)
+> tooling. The ESC/POS behaviour documented here was verified against real hardware, but the
+> code and documentation may still contain mistakes. Review and test it yourself before relying
+> on it in production.
+
 ## Hardware notes
 
 The printer enumerates as a standard **USB Printer Class** device (class `7`, subclass `1`,
